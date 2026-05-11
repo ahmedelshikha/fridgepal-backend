@@ -225,7 +225,72 @@ Rules:
     });
   }
 });
+app.post('/stores-for-state', async (req, res) => {
+  try {
+    const { state } = req.body;
 
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        error: 'Missing OPENAI_API_KEY',
+      });
+    }
+
+    if (!state || typeof state !== 'string') {
+      return res.status(400).json({
+        error: 'State is required',
+      });
+    }
+
+    const response = await openai.responses.create({
+      model: 'gpt-4o',
+      input: [
+        {
+          role: 'system',
+          content:
+            'You are a grocery retail assistant. Return only valid JSON. No markdown.',
+        },
+        {
+          role: 'user',
+          content: `
+Return common grocery stores available in ${state}, USA.
+
+Return ONLY valid JSON using this exact shape:
+{
+  "stores": ["Walmart", "Costco", "Instacart"]
+}
+
+Rules:
+- Include major national stores when relevant.
+- Include strong regional chains when well-known.
+- Keep the list between 3 and 8 stores.
+- Do not include stores that are very unlikely in that state.
+- Always include Instacart if available as a delivery option.
+`,
+        },
+      ],
+    });
+
+    const cleanedText = response.output_text
+      .replace(/```json/g, '')
+      .replace(/```/g, '')
+      .trim();
+
+    const parsed = JSON.parse(cleanedText);
+
+    res.json({
+      stores: Array.isArray(parsed.stores)
+        ? parsed.stores
+        : ['Walmart', 'Costco', 'Instacart'],
+    });
+  } catch (error) {
+    console.error('Stores for state error:', error);
+
+    res.status(500).json({
+      error: 'Could not detect stores',
+      details: error.message,
+    });
+  }
+});
 app.listen(PORT, () => {
   console.log(`FridgePal backend running on http://localhost:${PORT}`);
 });
