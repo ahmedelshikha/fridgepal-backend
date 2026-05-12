@@ -2,9 +2,13 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import OpenAI from 'openai';
+import multer from 'multer';
+import fs from 'fs';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+const upload = multer({ dest: 'uploads/' });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -12,6 +16,15 @@ const openai = new OpenAI({
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+function cleanJson(text) {
+  return text.replace(/```json/g, '').replace(/```/g, '').trim();
+}
+
+function imageToBase64(path) {
+  const imageBuffer = fs.readFileSync(path);
+  return imageBuffer.toString('base64');
+}
 
 app.get('/', (req, res) => {
   res.json({
@@ -24,34 +37,11 @@ app.post('/kitchen-chat', async (req, res) => {
   try {
     const { message, inventory = [], shoppingList = [] } = req.body;
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({
-        error: 'Missing OPENAI_API_KEY',
-      });
-    }
-
     if (!message || typeof message !== 'string') {
-      return res.status(400).json({
-        error: 'Message is required',
-      });
+      return res.status(400).json({ error: 'Message is required' });
     }
-
-    const inventorySummary = Array.isArray(inventory)
-      ? inventory.map((item) => ({
-          name: item.name || item.food || item.title || 'Unknown item',
-          quantity: item.quantity || item.amount || '',
-          expiryDate:
-            item.expiryDate ||
-            item.expirationDate ||
-            item.expiresAt ||
-            item.expiry ||
-            '',
-          category: item.category || '',
-        }))
-      : [];
 
     const lowerMessage = message.toLowerCase();
-
     const addMatch = lowerMessage.match(/add (.+?) to (my )?shopping list/i);
 
     if (addMatch && addMatch[1]) {
@@ -73,32 +63,8 @@ app.post('/kitchen-chat', async (req, res) => {
           role: 'system',
           content: `
 You are FridgePal AI, a smart kitchen assistant.
-
-You help users:
-- cook meals from their current inventory
-- reduce food waste
-- identify what expires soon
-- suggest grocery list items
-- give simple nutrition tips
-
-Always be concise, practical, and friendly.
-
-If the user asks what they can cook:
-- suggest 2 to 4 realistic meals
-- mention which inventory items each meal uses
-- mention any missing ingredients
-
-If the user asks what expires soon:
-- sort by closest expiry date when possible
-- explain what should be used first
-
-If inventory is empty:
-- say you do not see fridge items yet
-- still offer general meal ideas
-
-If the user asks about shopping list ideas:
-- suggest practical grocery items
-- do not claim anything was saved unless an action was returned
+Help users cook meals, reduce food waste, identify expiring food, and suggest groceries.
+Be concise, practical, and friendly.
 `,
         },
         {
@@ -107,10 +73,10 @@ If the user asks about shopping list ideas:
 User message:
 ${message}
 
-Current inventory:
-${JSON.stringify(inventorySummary, null, 2)}
+Inventory:
+${JSON.stringify(inventory, null, 2)}
 
-Current shopping list:
+Shopping list:
 ${JSON.stringify(shoppingList, null, 2)}
 `,
         },
@@ -134,16 +100,8 @@ app.post('/generate-meal-plan', async (req, res) => {
   try {
     const { inventory = [], days = 3, goal = 'Use Expiring Food' } = req.body;
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({
-        error: 'Missing OPENAI_API_KEY',
-      });
-    }
-
     if (!Array.isArray(inventory) || inventory.length === 0) {
-      return res.status(400).json({
-        error: 'Inventory is required',
-      });
+      return res.status(400).json({ error: 'Inventory is required' });
     }
 
     const response = await openai.responses.create({
@@ -157,16 +115,16 @@ app.post('/generate-meal-plan', async (req, res) => {
         {
           role: 'user',
           content: `
-Create a ${days}-day meal plan using this grocery inventory:
+Create a ${days}-day meal plan using this inventory:
 ${JSON.stringify(inventory, null, 2)}
 
 Goal:
 ${goal}
 
-Return ONLY valid JSON using this exact shape:
+Return ONLY valid JSON:
 {
   "summary": "short helpful summary",
-  "shoppingList": ["missing grocery 1", "missing grocery 2"],
+  "shoppingList": ["missing grocery 1"],
   "days": [
     {
       "day": 1,
@@ -194,28 +152,14 @@ Return ONLY valid JSON using this exact shape:
     }
   ]
 }
-
-Rules:
-- Prioritize food expiring soon.
-- Use inventory item names exactly when possible.
-- Missing items should be simple grocery names.
-- Keep meals realistic and easy.
-- Include breakfast, lunch, and dinner for every day.
 `,
         },
       ],
     });
 
-    const cleanedText = response.output_text
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
+    const mealPlan = JSON.parse(cleanJson(response.output_text));
 
-    const mealPlan = JSON.parse(cleanedText);
-
-    res.json({
-      mealPlan,
-    });
+    res.json({ mealPlan });
   } catch (error) {
     console.error('Meal plan error:', error);
 
@@ -225,20 +169,13 @@ Rules:
     });
   }
 });
+
 app.post('/stores-for-state', async (req, res) => {
   try {
     const { state } = req.body;
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({
-        error: 'Missing OPENAI_API_KEY',
-      });
-    }
-
     if (!state || typeof state !== 'string') {
-      return res.status(400).json({
-        error: 'State is required',
-      });
+      return res.status(400).json({ error: 'State is required' });
     }
 
     const response = await openai.responses.create({
@@ -254,28 +191,16 @@ app.post('/stores-for-state', async (req, res) => {
           content: `
 Return common grocery stores available in ${state}, USA.
 
-Return ONLY valid JSON using this exact shape:
+Return ONLY valid JSON:
 {
   "stores": ["Walmart", "Costco", "Instacart"]
 }
-
-Rules:
-- Include major national stores when relevant.
-- Include strong regional chains when well-known.
-- Keep the list between 3 and 8 stores.
-- Do not include stores that are very unlikely in that state.
-- Always include Instacart if available as a delivery option.
 `,
         },
       ],
     });
 
-    const cleanedText = response.output_text
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
-
-    const parsed = JSON.parse(cleanedText);
+    const parsed = JSON.parse(cleanJson(response.output_text));
 
     res.json({
       stores: Array.isArray(parsed.stores)
@@ -291,6 +216,214 @@ Rules:
     });
   }
 });
+
+app.post('/lookup-barcode', async (req, res) => {
+  try {
+    const { barcode } = req.body;
+
+    if (!barcode) {
+      return res.status(400).json({ error: 'Barcode is required' });
+    }
+
+    const response = await openai.responses.create({
+      model: 'gpt-4o',
+      input: [
+        {
+          role: 'system',
+          content:
+            'You identify grocery products from barcodes when possible. Return only valid JSON.',
+        },
+        {
+          role: 'user',
+          content: `
+Barcode:
+${barcode}
+
+Return ONLY valid JSON:
+{
+  "found": true,
+  "item": {
+    "name": "product name or blank if unknown",
+    "quantity": "1 item",
+    "expirationDate": ""
+  }
+}
+
+If you are not sure, return:
+{
+  "found": false,
+  "item": {
+    "name": "",
+    "quantity": "1 item",
+    "expirationDate": ""
+  }
+}
+`,
+        },
+      ],
+    });
+
+    const parsed = JSON.parse(cleanJson(response.output_text));
+
+    res.json(parsed);
+  } catch (error) {
+    console.error('Barcode lookup error:', error);
+
+    res.status(500).json({
+      error: 'Barcode lookup failed',
+      details: error.message,
+    });
+  }
+});
+
+app.post('/analyze-fridge', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Image is required' });
+    }
+
+    const base64Image = imageToBase64(req.file.path);
+
+    const response = await openai.responses.create({
+      model: 'gpt-4o',
+      input: [
+        {
+          role: 'system',
+          content:
+            'You analyze grocery/fridge photos and return only valid JSON. No markdown.',
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `
+Detect visible grocery/food items in this image.
+
+Return ONLY valid JSON:
+{
+  "items": [
+    {
+      "name": "food name",
+      "quantity": "1 item",
+      "expirationDate": ""
+    }
+  ]
+}
+
+Rules:
+- Only include clear grocery or food items.
+- Use simple names.
+- Estimate quantity if visible.
+- If no food is visible, return {"items":[]}.
+`,
+            },
+            {
+              type: 'input_image',
+              image_url: `data:image/jpeg;base64,${base64Image}`,
+            },
+          ],
+        },
+      ],
+    });
+
+    fs.unlinkSync(req.file.path);
+
+    const parsed = JSON.parse(cleanJson(response.output_text));
+
+    res.json({
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+    });
+  } catch (error) {
+    console.error('Analyze fridge error:', error);
+
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    res.status(500).json({
+      error: 'Fridge image analysis failed',
+      details: error.message,
+    });
+  }
+});
+
+app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Receipt image is required' });
+    }
+
+    const base64Image = imageToBase64(req.file.path);
+
+    const response = await openai.responses.create({
+      model: 'gpt-4o',
+      input: [
+        {
+          role: 'system',
+          content:
+            'You read grocery receipts and return only valid JSON. No markdown.',
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `
+Read this grocery receipt.
+
+Return ONLY valid JSON:
+{
+  "items": [
+    {
+      "name": "grocery item",
+      "quantity": "1 item",
+      "category": "Produce",
+      "location": "Fridge",
+      "expirationDate": ""
+    }
+  ]
+}
+
+Rules:
+- Only include grocery/food items.
+- Ignore taxes, totals, payment lines, discounts, and non-food items.
+- Use simple readable names.
+- Choose category from: Dairy, Protein, Produce, Grains, Pantry, Frozen, Other.
+- Choose location from: Fridge, Freezer, Pantry.
+- If no groceries are found, return {"items":[]}.
+`,
+            },
+            {
+              type: 'input_image',
+              image_url: `data:image/jpeg;base64,${base64Image}`,
+            },
+          ],
+        },
+      ],
+    });
+
+    fs.unlinkSync(req.file.path);
+
+    const parsed = JSON.parse(cleanJson(response.output_text));
+
+    res.json({
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+    });
+  } catch (error) {
+    console.error('Analyze receipt error:', error);
+
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    res.status(500).json({
+      error: 'Receipt analysis failed',
+      details: error.message,
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`FridgePal backend running on http://localhost:${PORT}`);
 });
