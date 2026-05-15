@@ -201,19 +201,29 @@ async function lookupOpenFoodFacts(barcode) {
         source: 'openfoodfacts',
         matchedBarcode: code,
         item: {
-          name,
-          quantity: product.quantity || product.serving_size || '1 item',
-          category,
-          location,
-          expirationDate: '',
-          barcode: code,
-          brand: product.brands || '',
-          imageUrl: product.image_front_url || '',
-          nutriScore: product.nutriscore_grade || '',
-          novaGroup: product.nova_group || '',
-          ingredients: product.ingredients_text || '',
-          additivesCount: product.additives_n || 0,
-        },
+  name,
+  quantity: product.quantity || product.serving_size || '1 item',
+  category,
+  location,
+  expirationDate: '',
+  barcode: code,
+  brand: product.brands || '',
+  imageUrl: product.image_front_url || '',
+  nutriScore: product.nutriscore_grade || '',
+  novaGroup: product.nova_group || '',
+  ingredients: product.ingredients_text || '',
+  additivesCount: product.additives_n || 0,
+
+  nutrition: {
+    calories: product.nutriments?.['energy-kcal_100g'] || null,
+    sugar: product.nutriments?.sugars_100g || null,
+    sodium: product.nutriments?.sodium_100g || null,
+    fat: product.nutriments?.fat_100g || null,
+    saturatedFat: product.nutriments?.['saturated-fat_100g'] || null,
+    protein: product.nutriments?.proteins_100g || null,
+    fiber: product.nutriments?.fiber_100g || null,
+  },
+}
       };
     } catch (error) {
       console.log(`Open Food Facts lookup error for ${code}:`, error.message);
