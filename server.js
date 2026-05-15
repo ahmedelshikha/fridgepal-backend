@@ -38,17 +38,14 @@ function getBarcodeVariants(barcode) {
 
   variants.add(clean);
 
-  // UPC-A can sometimes be represented as EAN-13 with a leading 0.
   if (clean.length === 13 && clean.startsWith('0')) {
     variants.add(clean.slice(1));
   }
 
-  // UPC-A sometimes needs a leading 0 for product databases.
   if (clean.length === 12) {
     variants.add(`0${clean}`);
   }
 
-  // Some scanners/drop systems remove leading zeros.
   if (clean.length < 13) {
     variants.add(clean.padStart(13, '0'));
   }
@@ -84,10 +81,7 @@ function inferBarcodeCategoryAndLocation(product = {}) {
     text.includes('cream') ||
     text.includes('dairy')
   ) {
-    return {
-      category: 'Dairy',
-      location: 'Fridge',
-    };
+    return { category: 'Dairy', location: 'Fridge' };
   }
 
   if (
@@ -100,17 +94,11 @@ function inferBarcodeCategoryAndLocation(product = {}) {
     text.includes('seafood') ||
     text.includes('meat')
   ) {
-    return {
-      category: 'Protein',
-      location: 'Fridge',
-    };
+    return { category: 'Protein', location: 'Fridge' };
   }
 
   if (text.includes('frozen') || text.includes('ice cream')) {
-    return {
-      category: 'Frozen',
-      location: 'Freezer',
-    };
+    return { category: 'Frozen', location: 'Freezer' };
   }
 
   if (
@@ -119,10 +107,7 @@ function inferBarcodeCategoryAndLocation(product = {}) {
     text.includes('produce') ||
     text.includes('salad')
   ) {
-    return {
-      category: 'Produce',
-      location: 'Fridge',
-    };
+    return { category: 'Produce', location: 'Fridge' };
   }
 
   if (
@@ -133,10 +118,7 @@ function inferBarcodeCategoryAndLocation(product = {}) {
     text.includes('oats') ||
     text.includes('grain')
   ) {
-    return {
-      category: 'Grains',
-      location: 'Pantry',
-    };
+    return { category: 'Grains', location: 'Pantry' };
   }
 
   if (
@@ -150,15 +132,26 @@ function inferBarcodeCategoryAndLocation(product = {}) {
     text.includes('juice') ||
     text.includes('soda')
   ) {
-    return {
-      category: 'Pantry',
-      location: 'Pantry',
-    };
+    return { category: 'Pantry', location: 'Pantry' };
   }
 
+  return { category: 'Other', location: 'Pantry' };
+}
+
+function getNutritionFacts(product = {}) {
+  const n = product.nutriments || {};
+
   return {
-    category: 'Other',
-    location: 'Pantry',
+    calories: n['energy-kcal_100g'] ?? null,
+    energyKj: n['energy-kj_100g'] ?? null,
+    sugar: n.sugars_100g ?? null,
+    sodium: n.sodium_100g ?? null,
+    salt: n.salt_100g ?? null,
+    fat: n.fat_100g ?? null,
+    saturatedFat: n['saturated-fat_100g'] ?? null,
+    carbs: n.carbohydrates_100g ?? null,
+    protein: n.proteins_100g ?? null,
+    fiber: n.fiber_100g ?? null,
   };
 }
 
@@ -201,29 +194,22 @@ async function lookupOpenFoodFacts(barcode) {
         source: 'openfoodfacts',
         matchedBarcode: code,
         item: {
-  name,
-  quantity: product.quantity || product.serving_size || '1 item',
-  category,
-  location,
-  expirationDate: '',
-  barcode: code,
-  brand: product.brands || '',
-  imageUrl: product.image_front_url || '',
-  nutriScore: product.nutriscore_grade || '',
-  novaGroup: product.nova_group || '',
-  ingredients: product.ingredients_text || '',
-  additivesCount: product.additives_n || 0,
-
-  nutrition: {
-    calories: product.nutriments?.['energy-kcal_100g'] || null,
-    sugar: product.nutriments?.sugars_100g || null,
-    sodium: product.nutriments?.sodium_100g || null,
-    fat: product.nutriments?.fat_100g || null,
-    saturatedFat: product.nutriments?.['saturated-fat_100g'] || null,
-    protein: product.nutriments?.proteins_100g || null,
-    fiber: product.nutriments?.fiber_100g || null,
-  },
-}
+          name,
+          quantity: product.quantity || product.serving_size || '1 item',
+          category,
+          location,
+          expirationDate: '',
+          barcode: code,
+          brand: product.brands || '',
+          imageUrl: product.image_front_url || '',
+          nutriScore: product.nutriscore_grade || '',
+          novaGroup: product.nova_group || '',
+          ingredients: product.ingredients_text || '',
+          additivesCount: product.additives_n || 0,
+          allergens: product.allergens || '',
+          labels: product.labels || '',
+          nutrition: getNutritionFacts(product),
+        },
       };
     } catch (error) {
       console.log(`Open Food Facts lookup error for ${code}:`, error.message);
@@ -463,6 +449,20 @@ app.post('/lookup-barcode', async (req, res) => {
         novaGroup: '',
         ingredients: '',
         additivesCount: 0,
+        allergens: '',
+        labels: '',
+        nutrition: {
+          calories: null,
+          energyKj: null,
+          sugar: null,
+          sodium: null,
+          salt: null,
+          fat: null,
+          saturatedFat: null,
+          carbs: null,
+          protein: null,
+          fiber: null,
+        },
       },
     });
   } catch (error) {
