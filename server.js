@@ -361,7 +361,65 @@ ${JSON.stringify(shoppingList, null, 2)}
     });
   }
 });
+app.post('/generate-recipes', async (req, res) => {
+  try {
+    const { inventory = [] } = req.body;
 
+    if (!Array.isArray(inventory) || inventory.length === 0) {
+      return res.status(400).json({ error: 'Inventory is required' });
+    }
+
+    const response = await openai.responses.create({
+      model: 'gpt-4o',
+      input: [
+        {
+          role: 'system',
+          content:
+            'You are FridgePal recipe AI. Return only valid JSON. No markdown.',
+        },
+        {
+          role: 'user',
+          content: `
+Create 3 realistic recipes using this inventory:
+${JSON.stringify(inventory, null, 2)}
+
+Prioritize ingredients that expire soon.
+
+Return ONLY valid JSON:
+{
+  "recipes": [
+    {
+      "id": "ai-recipe-1",
+      "name": "Recipe name",
+      "description": "Short description",
+      "prepTime": "20 mins",
+      "servings": 2,
+      "cuisine": "AI Generated",
+      "ingredients": ["ingredient 1"],
+      "missingIngredients": ["missing item 1"],
+      "instructions": ["step 1", "step 2"]
+    }
+  ]
+}
+`,
+        },
+      ],
+    });
+
+    const parsed = JSON.parse(cleanJson(response.output_text));
+
+    res.json({
+      recipes: Array.isArray(parsed.recipes) ? parsed.recipes : [],
+    });
+  } catch (error) {
+    console.error('Generate recipes error:', error);
+
+    res.status(500).json({
+      error: 'AI recipe generation failed',
+      details: error.message,
+    });
+  }
+});
 app.post('/generate-meal-plan', async (req, res) => {
   try {
     const { inventory = [], days = 3, goal = 'Use Expiring Food' } = req.body;
