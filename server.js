@@ -164,16 +164,11 @@ async function lookupOpenFoodFacts(barcode) {
         `https://world.openfoodfacts.org/api/v2/product/${code}.json`
       );
 
-      if (!response.ok) {
-        console.log(`Open Food Facts failed for ${code}:`, response.status);
-        continue;
-      }
+      if (!response.ok) continue;
 
       const data = await response.json();
 
-      if (data.status !== 1 || !data.product) {
-        continue;
-      }
+      if (data.status !== 1 || !data.product) continue;
 
       const product = data.product;
 
@@ -183,9 +178,7 @@ async function lookupOpenFoodFacts(barcode) {
         product.generic_name ||
         '';
 
-      if (!name) {
-        continue;
-      }
+      if (!name) continue;
 
       const { category, location } = inferBarcodeCategoryAndLocation(product);
 
@@ -228,10 +221,82 @@ app.get('/', (req, res) => {
       '/generate-meal-plan',
       '/stores-for-state',
       '/lookup-barcode',
+      '/search-recipes',
       '/analyze-fridge',
       '/analyze-receipt',
     ],
   });
+});
+
+app.get('/search-recipes', async (req, res) => {
+  try {
+    const query = String(req.query.query || '').trim();
+
+    if (!query) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+
+    const apiKey = process.env.SPOONACULAR_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        error: 'Missing Spoonacular API key',
+      });
+    }
+
+    const url =
+      `https://api.spoonacular.com/recipes/complexSearch` +
+      `?query=${encodeURIComponent(query)}` +
+      `&number=10` +
+      `&addRecipeInformation=true` +
+      `&fillIngredients=true` +
+      `&instructionsRequired=true` +
+      `&apiKey=${apiKey}`;
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const text = await response.text();
+
+      console.log('Spoonacular error:', text);
+
+      return res.status(response.status).json({
+        error: 'Spoonacular request failed',
+        details: text,
+      });
+    }
+
+    const data = await response.json();
+
+    const recipes = (data.results || []).map((recipe) => ({
+      id: recipe.id,
+      name: recipe.title,
+      image: recipe.image,
+      prepTime: recipe.readyInMinutes
+        ? `${recipe.readyInMinutes} mins`
+        : '',
+      servings: recipe.servings || 1,
+      source: 'Spoonacular',
+      sourceUrl: recipe.sourceUrl || '',
+      cuisine: recipe.cuisines?.[0] || recipe.dishTypes?.[0] || 'Recipe',
+      ingredients: (recipe.extendedIngredients || []).map(
+        (ingredient) => ingredient.original
+      ),
+      instructions:
+        recipe.analyzedInstructions?.[0]?.steps?.map((step) => step.step) ||
+        [],
+      summary: recipe.summary || '',
+    }));
+
+    res.json({ recipes });
+  } catch (error) {
+    console.error('Search recipes error:', error);
+
+    res.status(500).json({
+      error: 'Recipe search failed',
+      details: error.message,
+    });
+  }
 });
 
 app.post('/kitchen-chat', async (req, res) => {
