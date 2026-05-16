@@ -224,6 +224,7 @@ app.get('/', (req, res) => {
       '/search-recipes',
       '/analyze-fridge',
       '/analyze-receipt',
+      '/generate-recipes',
     ],
   });
 });
