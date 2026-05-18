@@ -753,43 +753,7 @@ app.get('/search-recipes', async (req, res) => {
     });
   }
 });
-async function lookupSpoonacularProduct(barcode) {
-  const apiKey = process.env.SPOONACULAR_API_KEY;
 
-  if (!apiKey) {
-    console.log('Missing SPOONACULAR_API_KEY');
-    return null;
-  }
-
-  const variants = getBarcodeVariants(barcode);
-
-  for (const code of variants) {
-    try {
-      const response = await fetch(
-        `https://api.spoonacular.com/food/products/upc/${code}?apiKey=${apiKey}`
-      );
-
-      if (!response.ok) {
-        const text = await response.text();
-        console.log(`Spoonacular UPC lookup failed for ${code}:`, text);
-        continue;
-      }
-
-      const product = await response.json();
-
-      if (!product || product.status === 'failure') continue;
-
-      return {
-        matchedBarcode: code,
-        product,
-      };
-    } catch (error) {
-      console.log(`Spoonacular UPC error for ${code}:`, error.message);
-    }
-  }
-
-  return null;
-}
 
 function normalizeIngredients(spoonProduct = {}, ingredientsText = '') {
   if (Array.isArray(spoonProduct.ingredients) && spoonProduct.ingredients.length > 0) {
