@@ -17,6 +17,81 @@ const openai = new OpenAI({
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+const INGREDIENT_FLAGS = {
+  'red 40': {
+    level: 'high',
+    reason: 'Artificial food dye',
+  },
+  'yellow 5': {
+    level: 'high',
+    reason: 'Artificial coloring additive',
+  },
+  'yellow 6': {
+    level: 'high',
+    reason: 'Artificial coloring additive',
+  },
+  'sodium nitrite': {
+    level: 'high',
+    reason: 'Processed meat preservative',
+  },
+  aspartame: {
+    level: 'moderate',
+    reason: 'Artificial sweetener',
+  },
+  sucralose: {
+    level: 'moderate',
+    reason: 'Artificial sweetener',
+  },
+  acesulfame: {
+    level: 'moderate',
+    reason: 'Artificial sweetener',
+  },
+  carrageenan: {
+    level: 'moderate',
+    reason: 'Texture stabilizer',
+  },
+  'soybean oil': {
+    level: 'moderate',
+    reason: 'Highly processed seed oil',
+  },
+  'canola oil': {
+    level: 'moderate',
+    reason: 'Highly refined seed oil',
+  },
+  'corn oil': {
+    level: 'moderate',
+    reason: 'Processed vegetable oil',
+  },
+  'cottonseed oil': {
+    level: 'moderate',
+    reason: 'Refined industrial oil',
+  },
+  pistachios: {
+    level: 'positive',
+    reason: 'Whole food ingredient',
+  },
+  almonds: {
+    level: 'positive',
+    reason: 'Nutrient-dense whole food',
+  },
+  oats: {
+    level: 'positive',
+    reason: 'High fiber whole grain',
+  },
+  peanuts: {
+    level: 'positive',
+    reason: 'Protein-rich whole food',
+  },
+  eggs: {
+    level: 'positive',
+    reason: 'High-quality protein source',
+  },
+  salmon: {
+    level: 'positive',
+    reason: 'Rich in omega-3 fats',
+  },
+};
+
 function cleanJson(text = '') {
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
 }
@@ -155,6 +230,44 @@ function getNutritionFacts(product = {}) {
   };
 }
 
+function extractServingGrams(servingSize = '') {
+  if (!servingSize) return null;
+
+  const match = String(servingSize)
+    .toLowerCase()
+    .match(/(\d+(?:\.\d+)?)\s*g/);
+
+  if (!match) return null;
+
+  return Number(match[1]);
+}
+
+function convertNutritionPerServing(nutrition = {}, grams = null) {
+  if (!grams || grams <= 0) return null;
+
+  const multiplier = grams / 100;
+
+  const convert = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    return Number((number * multiplier).toFixed(2));
+  };
+
+  return {
+    calories: convert(nutrition.calories),
+    energyKj: convert(nutrition.energyKj),
+    sugar: convert(nutrition.sugar),
+    sodium: convert(nutrition.sodium),
+    salt: convert(nutrition.salt),
+    fat: convert(nutrition.fat),
+    saturatedFat: convert(nutrition.saturatedFat),
+    carbs: convert(nutrition.carbs),
+    protein: convert(nutrition.protein),
+    fiber: convert(nutrition.fiber),
+  };
+}
+
 function extractOffIngredients(ingredientsArray) {
   if (!Array.isArray(ingredientsArray)) return '';
 
@@ -186,6 +299,40 @@ function normalizeIngredients(spoonProduct = {}, ingredientsText = '') {
     }))
     .filter((ingredient) => ingredient.name);
 }
+function analyzeIngredients(ingredients = []) {
+  const findings = [];
+
+  for (const ingredient of ingredients) {
+    const normalized = String(ingredient.name || ingredient)
+      .toLowerCase()
+      .trim();
+
+    const exactMatch = INGREDIENT_FLAGS[normalized];
+
+    if (exactMatch) {
+      findings.push({
+        ingredient: ingredient.name || ingredient,
+        level: exactMatch.level,
+        reason: exactMatch.reason,
+      });
+      continue;
+    }
+
+    const partialKey = Object.keys(INGREDIENT_FLAGS).find((key) =>
+      normalized.includes(key)
+    );
+
+    if (partialKey) {
+      findings.push({
+        ingredient: ingredient.name || ingredient,
+        level: INGREDIENT_FLAGS[partialKey].level,
+        reason: INGREDIENT_FLAGS[partialKey].reason,
+      });
+    }
+  }
+
+  return findings;
+}
 
 function calculateFridgePalHealthScore({
   nutriScore,
@@ -194,6 +341,7 @@ function calculateFridgePalHealthScore({
   nutrition,
   spoonProduct,
   ingredients,
+  ingredientAnalysis = [],
 }) {
   let score =
     nutriScore === 'a'
@@ -250,6 +398,12 @@ function calculateFridgePalHealthScore({
     if (lowerIngredients.includes(word)) score -= 5;
   });
 
+  ingredientAnalysis.forEach((finding) => {
+    if (finding.level === 'high') score -= 8;
+    if (finding.level === 'moderate') score -= 4;
+    if (finding.level === 'positive') score += 3;
+  });
+
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
@@ -260,6 +414,9 @@ function buildHealthInsights({
   nutrition,
   spoonProduct,
   ingredients,
+  ingredientAnalysis = [],
+  servingSize,
+  nutritionPerServing,
 }) {
   const insights = [];
 
@@ -282,42 +439,107 @@ function buildHealthInsights({
   if (Number(novaGroup) === 4) {
     insights.push({
       type: 'warning',
-      title: 'Ultra-processed',
-      detail: 'This product is classified as highly processed.',
+      title: 'Ultra-processed food',
+      detail: 'This product is classified as ultra-processed (NOVA 4).',
+    });
+  }
+
+  if (Number(novaGroup) === 3) {
+    insights.push({
+      type: 'warning',
+      title: 'Processed food',
+      detail: 'This product is classified as processed (NOVA 3).',
     });
   }
 
   if (Number(additivesCount) >= 3) {
     insights.push({
       type: 'warning',
-      title: 'Multiple additives',
-      detail: `${additivesCount} additives were detected.`,
+      title: 'Multiple additives detected',
+      detail: `Contains ${additivesCount} additives.`,
     });
   }
 
-  if (Number(nutrition?.sugar) >= 10) {
+  if (Number(additivesCount) === 0) {
+    insights.push({
+      type: 'positive',
+      title: 'No additives detected',
+      detail: 'No additive markers were found in this product data.',
+    });
+  }
+
+  if (Number(nutrition?.sugar) >= 22) {
     insights.push({
       type: 'warning',
-      title: 'High sugar',
-      detail: `${nutrition.sugar}g sugar detected per 100g.`,
+      title: 'Very high sugar per 100g',
+      detail: `Contains ${nutrition.sugar}g sugar per 100g.`,
+    });
+  } else if (Number(nutrition?.sugar) >= 10) {
+    insights.push({
+      type: 'warning',
+      title: 'High sugar per 100g',
+      detail: `Contains ${nutrition.sugar}g sugar per 100g.`,
+    });
+  }
+
+  if (nutritionPerServing && Number(nutritionPerServing.sugar) >= 10) {
+    insights.push({
+      type: 'warning',
+      title: 'High sugar per serving',
+      detail: `Contains ${nutritionPerServing.sugar}g sugar per serving${
+        servingSize ? ` (${servingSize})` : ''
+      }.`,
     });
   }
 
   if (Number(nutrition?.fiber) >= 5) {
     insights.push({
       type: 'positive',
-      title: 'Good fiber',
-      detail: `${nutrition.fiber}g fiber detected per 100g.`,
+      title: 'Good fiber content',
+      detail: `Contains ${nutrition.fiber}g fiber per 100g.`,
+    });
+  }
+
+  if (nutritionPerServing && Number(nutritionPerServing.fiber) >= 2) {
+    insights.push({
+      type: 'positive',
+      title: 'Good fiber per serving',
+      detail: `Contains ${nutritionPerServing.fiber}g fiber per serving${
+        servingSize ? ` (${servingSize})` : ''
+      }.`,
     });
   }
 
   if (Number(nutrition?.protein) >= 8) {
     insights.push({
       type: 'positive',
-      title: 'Good protein',
-      detail: `${nutrition.protein}g protein detected per 100g.`,
+      title: 'Good protein content',
+      detail: `Contains ${nutrition.protein}g protein per 100g.`,
     });
   }
+
+  if (nutritionPerServing && Number(nutritionPerServing.protein) >= 5) {
+    insights.push({
+      type: 'positive',
+      title: 'Good protein per serving',
+      detail: `Contains ${nutritionPerServing.protein}g protein per serving${
+        servingSize ? ` (${servingSize})` : ''
+      }.`,
+    });
+  }
+
+  ingredientAnalysis.forEach((finding) => {
+    insights.push({
+      type:
+        finding.level === 'positive'
+          ? 'positive'
+          : finding.level === 'high'
+          ? 'warning'
+          : 'badge',
+      title: finding.ingredient,
+      detail: finding.reason,
+    });
+  });
 
   const badges = spoonProduct?.importantBadges || spoonProduct?.badges || [];
 
@@ -408,6 +630,18 @@ async function lookupOpenFoodFacts(barcode) {
         ? product.additives_tags.map((tag) => String(tag).replace('en:', ''))
         : [];
 
+      const nutrition = getNutritionFacts(product);
+
+      const servingSize = product.serving_size || '';
+      const servingGrams = extractServingGrams(servingSize || product.quantity || '');
+      const nutritionPerServing = convertNutritionPerServing(
+        nutrition,
+        servingGrams
+      );
+
+      const normalizedIngredients = normalizeIngredients({}, ingredients);
+      const ingredientAnalysis = analyzeIngredients(normalizedIngredients);
+
       return {
         found: true,
         source: 'openfoodfacts',
@@ -424,15 +658,39 @@ async function lookupOpenFoodFacts(barcode) {
           imageUrl: product.image_front_url || product.image_url || '',
           nutriScore: product.nutriscore_grade || '',
           novaGroup: product.nova_group || '',
+
           ingredients,
+          normalizedIngredients,
+          ingredientAnalysis,
+
           additives,
           additivesCount:
             typeof product.additives_n === 'number'
               ? product.additives_n
               : additives.length,
+
           allergens: product.allergens || '',
           labels: product.labels || '',
-          nutrition: getNutritionFacts(product),
+
+          nutrition,
+          servingSize,
+          servingGrams,
+          nutritionPerServing,
+
+          healthInsights: buildHealthInsights({
+            nutriScore: String(product.nutriscore_grade || '').toLowerCase(),
+            novaGroup: product.nova_group || '',
+            additivesCount:
+              typeof product.additives_n === 'number'
+                ? product.additives_n
+                : additives.length,
+            nutrition,
+            spoonProduct: {},
+            ingredients,
+            ingredientAnalysis,
+            servingSize,
+            nutritionPerServing,
+          }),
         },
       };
     } catch (error) {
@@ -442,7 +700,6 @@ async function lookupOpenFoodFacts(barcode) {
 
   return null;
 }
-
 async function lookupSpoonacularProduct(barcode) {
   const apiKey = process.env.SPOONACULAR_API_KEY;
 
@@ -489,24 +746,78 @@ function buildMergedBarcodeResult({
   const offItem = openFoodFactsResult?.item || {};
   const spoonProduct = spoonacularResult?.product || {};
 
-  const ingredients = offItem.ingredients || spoonProduct.ingredientList || '';
+  const ingredients =
+    offItem.ingredients ||
+    spoonProduct.ingredientList ||
+    '';
+
+  const normalizedIngredients =
+    offItem.normalizedIngredients?.length
+      ? offItem.normalizedIngredients
+      : normalizeIngredients(spoonProduct, ingredients);
+
+  const ingredientAnalysis =
+    offItem.ingredientAnalysis?.length
+      ? offItem.ingredientAnalysis
+      : analyzeIngredients(normalizedIngredients);
 
   const nutrition = {
-    calories: offItem.nutrition?.calories ?? spoonProduct.nutrition?.calories ?? null,
-    energyKj: offItem.nutrition?.energyKj ?? null,
-    sugar: offItem.nutrition?.sugar ?? spoonProduct.nutrition?.sugar ?? null,
-    sodium: offItem.nutrition?.sodium ?? spoonProduct.nutrition?.sodium ?? null,
-    salt: offItem.nutrition?.salt ?? null,
-    fat: offItem.nutrition?.fat ?? spoonProduct.nutrition?.fat ?? null,
+    calories:
+      offItem.nutrition?.calories ??
+      spoonProduct.nutrition?.calories ??
+      null,
+    energyKj:
+      offItem.nutrition?.energyKj ??
+      null,
+    sugar:
+      offItem.nutrition?.sugar ??
+      spoonProduct.nutrition?.sugar ??
+      null,
+    sodium:
+      offItem.nutrition?.sodium ??
+      spoonProduct.nutrition?.sodium ??
+      null,
+    salt:
+      offItem.nutrition?.salt ??
+      null,
+    fat:
+      offItem.nutrition?.fat ??
+      spoonProduct.nutrition?.fat ??
+      null,
     saturatedFat:
-      offItem.nutrition?.saturatedFat ?? spoonProduct.nutrition?.saturatedFat ?? null,
-    carbs: offItem.nutrition?.carbs ?? spoonProduct.nutrition?.carbs ?? null,
-    protein: offItem.nutrition?.protein ?? spoonProduct.nutrition?.protein ?? null,
-    fiber: offItem.nutrition?.fiber ?? spoonProduct.nutrition?.fiber ?? null,
+      offItem.nutrition?.saturatedFat ??
+      spoonProduct.nutrition?.saturatedFat ??
+      null,
+    carbs:
+      offItem.nutrition?.carbs ??
+      spoonProduct.nutrition?.carbs ??
+      null,
+    protein:
+      offItem.nutrition?.protein ??
+      spoonProduct.nutrition?.protein ??
+      null,
+    fiber:
+      offItem.nutrition?.fiber ??
+      spoonProduct.nutrition?.fiber ??
+      null,
   };
+
+  const servingSize =
+    offItem.servingSize ||
+    spoonProduct.servingSize ||
+    '';
+
+  const servingGrams =
+    offItem.servingGrams ||
+    extractServingGrams(servingSize);
+
+  const nutritionPerServing =
+    offItem.nutritionPerServing ||
+    convertNutritionPerServing(nutrition, servingGrams);
 
   const nutriScore = String(offItem.nutriScore || '').toLowerCase();
   const novaGroup = offItem.novaGroup || '';
+
   const additivesCount =
     offItem.additivesCount !== undefined && offItem.additivesCount !== null
       ? offItem.additivesCount
@@ -519,6 +830,7 @@ function buildMergedBarcodeResult({
     nutrition,
     spoonProduct,
     ingredients,
+    ingredientAnalysis,
   });
 
   const healthInsights = buildHealthInsights({
@@ -528,6 +840,9 @@ function buildMergedBarcodeResult({
     nutrition,
     spoonProduct,
     ingredients,
+    ingredientAnalysis,
+    servingSize,
+    nutritionPerServing,
   });
 
   return {
@@ -541,28 +856,64 @@ function buildMergedBarcodeResult({
       spoonacularResult?.matchedBarcode ||
       barcode,
     item: {
-      name: offItem.name || spoonProduct.title || '',
-      quantity: offItem.quantity || spoonProduct.servingSize || '1 item',
-      category: offItem.category || spoonProduct.breadcrumbs?.[0] || 'Other',
-      location: offItem.location || 'Pantry',
+      name:
+        offItem.name ||
+        spoonProduct.title ||
+        '',
+
+      quantity:
+        offItem.quantity ||
+        servingSize ||
+        '1 item',
+
+      category:
+        offItem.category ||
+        spoonProduct.breadcrumbs?.[0] ||
+        'Other',
+
+      location:
+        offItem.location ||
+        'Pantry',
+
       expirationDate: '',
+
       barcode:
         openFoodFactsResult?.matchedBarcode ||
         spoonacularResult?.matchedBarcode ||
         barcode,
-      brand: offItem.brand || spoonProduct.brand || '',
-      imageUrl: offItem.imageUrl || spoonProduct.image || '',
+
+      brand:
+        offItem.brand ||
+        spoonProduct.brand ||
+        '',
+
+      imageUrl:
+        offItem.imageUrl ||
+        spoonProduct.image ||
+        '',
+
       nutriScore,
       novaGroup,
+
       ingredients,
-      normalizedIngredients: normalizeIngredients(spoonProduct, ingredients),
+      normalizedIngredients,
+      ingredientAnalysis,
+
       additives: offItem.additives || [],
       additivesCount,
+
       allergens: offItem.allergens || '',
       labels: offItem.labels || '',
+
       nutrition,
+
+      servingSize,
+      servingGrams,
+      nutritionPerServing,
+
       healthScore,
       healthInsights,
+
       spoonacularBadges: spoonProduct.badges || [],
       spoonacularImportantBadges: spoonProduct.importantBadges || [],
       spoonacularGeneratedText: spoonProduct.generatedText || '',
@@ -591,6 +942,7 @@ function emptyBarcodeResult(barcode) {
       novaGroup: '',
       ingredients: '',
       normalizedIngredients: [],
+      ingredientAnalysis: [],
       additives: [],
       additivesCount: 0,
       allergens: '',
@@ -607,6 +959,9 @@ function emptyBarcodeResult(barcode) {
         protein: null,
         fiber: null,
       },
+      servingSize: '',
+      servingGrams: null,
+      nutritionPerServing: null,
       healthScore: null,
       healthInsights: [],
       spoonacularBadges: [],
@@ -644,7 +999,9 @@ app.get('/search-recipes', async (req, res) => {
     const apiKey = process.env.SPOONACULAR_API_KEY;
 
     if (!apiKey) {
-      return res.status(500).json({ error: 'Missing Spoonacular API key' });
+      return res.status(500).json({
+        error: 'Missing Spoonacular API key',
+      });
     }
 
     const url =
@@ -660,7 +1017,9 @@ app.get('/search-recipes', async (req, res) => {
 
     if (!response.ok) {
       const text = await response.text();
+
       console.log('Spoonacular error:', text);
+
       return res.status(response.status).json({
         error: 'Spoonacular request failed',
         details: text,
@@ -673,7 +1032,9 @@ app.get('/search-recipes', async (req, res) => {
       id: recipe.id,
       name: recipe.title,
       image: recipe.image,
-      prepTime: recipe.readyInMinutes ? `${recipe.readyInMinutes} mins` : '',
+      prepTime: recipe.readyInMinutes
+        ? `${recipe.readyInMinutes} mins`
+        : '',
       servings: recipe.servings || 1,
       source: 'Spoonacular',
       sourceUrl: recipe.sourceUrl || '',
@@ -682,13 +1043,15 @@ app.get('/search-recipes', async (req, res) => {
         (ingredient) => ingredient.original
       ),
       instructions:
-        recipe.analyzedInstructions?.[0]?.steps?.map((step) => step.step) || [],
+        recipe.analyzedInstructions?.[0]?.steps?.map((step) => step.step) ||
+        [],
       summary: recipe.summary || '',
     }));
 
     res.json({ recipes });
   } catch (error) {
     console.error('Search recipes error:', error);
+
     res.status(500).json({
       error: 'Recipe search failed',
       details: error.message,
@@ -731,13 +1094,13 @@ app.post('/lookup-barcode', async (req, res) => {
     return res.json(emptyBarcodeResult(barcode));
   } catch (error) {
     console.error('Barcode lookup error:', error);
+
     return res.status(500).json({
       error: 'Barcode lookup failed',
       details: error.message,
     });
   }
 });
-
 app.post('/kitchen-chat', async (req, res) => {
   try {
     const { message, inventory = [], shoppingList = [] } = req.body;
@@ -793,6 +1156,7 @@ ${JSON.stringify(shoppingList, null, 2)}
     });
   } catch (error) {
     console.error('Kitchen chat error:', error);
+
     res.status(500).json({
       error: 'Kitchen chat failed',
       details: error.message,
@@ -813,7 +1177,8 @@ app.post('/generate-recipes', async (req, res) => {
       input: [
         {
           role: 'system',
-          content: 'You are FridgePal recipe AI. Return only valid JSON. No markdown.',
+          content:
+            'You are FridgePal recipe AI. Return only valid JSON. No markdown.',
         },
         {
           role: 'user',
@@ -851,6 +1216,7 @@ Return ONLY valid JSON:
     });
   } catch (error) {
     console.error('Generate recipes error:', error);
+
     res.status(500).json({
       error: 'AI recipe generation failed',
       details: error.message,
@@ -871,7 +1237,8 @@ app.post('/generate-meal-plan', async (req, res) => {
       input: [
         {
           role: 'system',
-          content: 'You are FridgePal meal planning AI. Return only valid JSON. No markdown.',
+          content:
+            'You are FridgePal meal planning AI. Return only valid JSON. No markdown.',
         },
         {
           role: 'user',
@@ -923,6 +1290,7 @@ Return ONLY valid JSON:
     res.json({ mealPlan });
   } catch (error) {
     console.error('Meal plan error:', error);
+
     res.status(500).json({
       error: 'Meal plan generation failed',
       details: error.message,
@@ -943,7 +1311,8 @@ app.post('/stores-for-state', async (req, res) => {
       input: [
         {
           role: 'system',
-          content: 'You are a grocery retail assistant. Return only valid JSON. No markdown.',
+          content:
+            'You are a grocery retail assistant. Return only valid JSON. No markdown.',
         },
         {
           role: 'user',
@@ -968,6 +1337,7 @@ Return ONLY valid JSON:
     });
   } catch (error) {
     console.error('Stores for state error:', error);
+
     res.status(500).json({
       error: 'Could not detect stores',
       details: error.message,
@@ -988,7 +1358,8 @@ app.post('/analyze-fridge', upload.single('image'), async (req, res) => {
       input: [
         {
           role: 'system',
-          content: 'You analyze grocery/fridge photos and return only valid JSON. No markdown.',
+          content:
+            'You analyze grocery/fridge photos and return only valid JSON. No markdown.',
         },
         {
           role: 'user',
@@ -1059,7 +1430,8 @@ app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
       input: [
         {
           role: 'system',
-          content: 'You read grocery receipts and return only valid JSON. No markdown.',
+          content:
+            'You read grocery receipts and return only valid JSON. No markdown.',
         },
         {
           role: 'user',
