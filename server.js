@@ -814,6 +814,12 @@ function buildMergedBarcodeResult({
   const nutritionPerServing =
     offItem.nutritionPerServing ||
     convertNutritionPerServing(nutrition, servingGrams);
+    console.log('SERVING DEBUG:', {
+  name: offItem.name || spoonProduct.title || '',
+  servingSize,
+  servingGrams,
+  nutritionPerServing,
+});
 
   const nutriScore = String(offItem.nutriScore || '').toLowerCase();
   const novaGroup = offItem.novaGroup || '';
